@@ -134,6 +134,8 @@ constexpr T&& inline_assertion_check(LIFETIMEBOUND T&& val, [[maybe_unused]] con
 #    if __has_feature(address_sanitizer)
 #       include <sanitizer/asan_interface.h>
 #    endif
+#elif defined(__SANITIZE_ADDRESS__)
+#    include <sanitizer/asan_interface.h>
 #endif
 
 #ifndef ASAN_POISON_MEMORY_REGION
