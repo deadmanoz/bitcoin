@@ -12,18 +12,22 @@
 
 namespace sha256_sse4
 {
-void Transform(uint32_t* s, const unsigned char* chunk, size_t blocks)
+/*
+ * When compiled with AddressSanitizer, the instrumentation of this
+ * inline assembly causes failures:
+ * - Clang: compilation errors (see https://github.com/llvm/llvm-project/issues/92182
+ *   and https://github.com/bitcoin/bitcoin/issues/31913).
+ * - GCC: runtime SEGV during SHA256AutoDetect()'s self-test on CPUs
+ *   that use the SSE4 code path (i.e. those without SHA-NI).
+ */
 #if defined(__clang__)
-  /*
-  clang is unable to compile this with -O0 and -fsanitize=address.
-  See upstream bug: https://github.com/llvm/llvm-project/issues/92182.
-  This also fails to compile with -O2, -fcf-protection & -fsanitize=address.
-  See https://github.com/bitcoin/bitcoin/issues/31913.
-  */
-#if __has_feature(address_sanitizer)
+  #if __has_feature(address_sanitizer)
+    __attribute__((no_sanitize("address")))
+  #endif
+#elif defined(__GNUC__) && defined(__SANITIZE_ADDRESS__)
   __attribute__((no_sanitize("address")))
 #endif
-#endif
+void Transform(uint32_t* s, const unsigned char* chunk, size_t blocks)
 {
     static const uint32_t K256 alignas(16) [] = {
         0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5,
