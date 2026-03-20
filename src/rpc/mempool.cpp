@@ -861,6 +861,57 @@ static RPCHelpMan getmempoolcluster()
     };
 }
 
+static RPCHelpMan getmempoolclusters()
+{
+    return RPCHelpMan{"getmempoolclusters",
+        "Returns all clusters in the mempool.\n"
+        "This is a hidden RPC intended for debugging and analysis.\n",
+        {},
+        RPCResult{
+            RPCResult::Type::OBJ, "", "",
+            {
+                RPCResult{RPCResult::Type::NUM, "clustercount", "number of clusters"},
+                RPCResult{RPCResult::Type::ARR, "clusters", "all clusters in the mempool",
+                    {RPCResult{RPCResult::Type::OBJ, "", "", ClusterDescription()}}
+                },
+            }
+        },
+        RPCExamples{
+            HelpExampleCli("getmempoolclusters", "")
+            + HelpExampleRpc("getmempoolclusters", "")
+        },
+        [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue
+{
+    const CTxMemPool& mempool = EnsureAnyMemPool(request.context);
+    LOCK(mempool.cs);
+
+    UniValue result(UniValue::VOBJ);
+    UniValue clusters_arr(UniValue::VARR);
+
+    // Track which clusters we've already seen using the first entry as representative
+    std::set<const CTxMemPoolEntry*> seen_cluster_roots;
+
+    for (const auto& entry : mempool.mapTx) {
+        auto cluster = mempool.GetCluster(entry.GetTx().GetHash());
+        if (cluster.empty()) continue;
+
+        // Use first entry in cluster as unique identifier
+        const CTxMemPoolEntry* cluster_root = cluster.front();
+        if (seen_cluster_roots.insert(cluster_root).second) {
+            // New cluster - add to output
+            UniValue cluster_info(UniValue::VOBJ);
+            clusterToJSON(mempool, cluster_info, cluster);
+            clusters_arr.push_back(cluster_info);
+        }
+    }
+
+    result.pushKV("clustercount", (int)clusters_arr.size());
+    result.pushKV("clusters", clusters_arr);
+    return result;
+},
+    };
+}
+
 static RPCHelpMan getmempoolentry()
 {
     return RPCHelpMan{
@@ -1531,6 +1582,7 @@ void RegisterMempoolRPCCommands(CRPCTable& t)
         {"blockchain", &importmempool},
         {"blockchain", &savemempool},
         {"hidden", &getorphantxs},
+        {"hidden", &getmempoolclusters},
         {"rawtransactions", &submitpackage},
     };
     for (const auto& c : commands) {

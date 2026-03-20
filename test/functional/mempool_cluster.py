@@ -387,12 +387,61 @@ class MempoolClusterTest(BitcoinTestFramework):
         first_chunk_info = node.getmempoolcluster(first_chunk_tx["txid"])
         assert_equal(first_chunk_info, {'clusterweight': first_chunkweight + second_chunkweight + third_chunkweight, 'txcount': 3, 'chunks': [{'chunkfee': first_chunk_tx["fee"], 'chunkweight': first_chunkweight, 'txs': [first_chunk_tx["txid"]]}, {'chunkfee': second_chunk_tx["fee"] + 2*third_chunk_tx["fee"] + Decimal("0.00000001"), 'chunkweight': second_chunkweight + third_chunkweight, 'txs': [second_chunk_tx["txid"], third_chunk_tx["txid"]]}]})
 
+    @cleanup
+    def test_getmempoolclusters(self):
+        """Test the getmempoolclusters hidden RPC"""
+        self.log.info("Testing getmempoolclusters RPC")
+        node = self.nodes[0]
+
+        # Test empty mempool
+        result = node.getmempoolclusters()
+        assert_equal(result['clustercount'], 0)
+        assert_equal(result['clusters'], [])
+
+        # Create first cluster (single tx)
+        tx1 = self.wallet.send_self_transfer(from_node=node)
+        result = node.getmempoolclusters()
+        assert_equal(result['clustercount'], 1)
+        assert_equal(result['clusters'][0]['txcount'], 1)
+
+        # Create second independent cluster (single tx from confirmed UTXO)
+        tx2 = self.wallet.send_self_transfer(from_node=node, confirmed_only=True)
+        result = node.getmempoolclusters()
+        assert_equal(result['clustercount'], 2)
+
+        # Extend first cluster with a child (now 2 txs in that cluster)
+        tx1_child = self.wallet.send_self_transfer(
+            from_node=node,
+            utxo_to_spend=tx1["new_utxo"]
+        )
+        result = node.getmempoolclusters()
+        assert_equal(result['clustercount'], 2)  # Still 2 clusters
+
+        # Find the cluster with 2 txs
+        cluster_sizes = sorted([c['txcount'] for c in result['clusters']])
+        assert_equal(cluster_sizes, [1, 2])
+
+        # Verify cluster structure matches ClusterDescription()
+        for cluster in result['clusters']:
+            assert 'clusterweight' in cluster
+            assert 'txcount' in cluster
+            assert 'chunks' in cluster
+            assert_greater_than(cluster['clusterweight'], 0)
+            for chunk in cluster['chunks']:
+                assert 'chunkfee' in chunk
+                assert 'chunkweight' in chunk
+                assert 'txs' in chunk
+                assert len(chunk['txs']) > 0
+
+        self.log.info("getmempoolclusters RPC test passed")
+
     def run_test(self):
         node = self.nodes[0]
         self.wallet = MiniWallet(node)
         self.generate(self.wallet, 400)
 
         self.test_getmempoolcluster()
+        self.test_getmempoolclusters()
 
         self.test_cluster_limit_rbf(DEFAULT_CLUSTER_LIMIT)
 
