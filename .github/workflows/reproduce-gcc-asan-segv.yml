@@ -15,7 +15,7 @@ on:
       fix_branch:
         description: "Branch containing the fix"
         required: true
-        default: "fix/gcc-asan-sha256-sse4-segv"
+        default: "fix/gcc-asan-sha256-sse4"
 
 jobs:
   before-fix:
@@ -70,7 +70,8 @@ jobs:
             -DENABLE_WALLET=OFF \
             -DBUILD_CLI=OFF \
             -DBUILD_TX=OFF \
-            -DBUILD_UTIL=OFF
+            -DBUILD_UTIL=OFF \
+            -DENABLE_IPC=OFF
           cmake --build build --target test_bitcoin -j$(nproc)
 
       - name: Run crypto tests (expect SEGV)
@@ -144,7 +145,8 @@ jobs:
             -DENABLE_WALLET=OFF \
             -DBUILD_CLI=OFF \
             -DBUILD_TX=OFF \
-            -DBUILD_UTIL=OFF
+            -DBUILD_UTIL=OFF \
+            -DENABLE_IPC=OFF
           cmake --build build --target test_bitcoin -j$(nproc)
 
       - name: Run crypto tests (should pass)
