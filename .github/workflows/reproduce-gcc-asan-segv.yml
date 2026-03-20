@@ -79,7 +79,7 @@ jobs:
         continue-on-error: true
         run: |
           echo "Running crypto_tests — expecting AddressSanitizer SEGV..."
-          ./build/src/test/test_bitcoin --run_test=crypto_tests 2>&1
+          ./build/bin/test_bitcoin --run_test=crypto_tests 2>&1
           echo "exit_code=$?" >> "$GITHUB_OUTPUT"
 
       - name: Verify failure
@@ -152,5 +152,5 @@ jobs:
       - name: Run crypto tests (should pass)
         run: |
           echo "Running crypto_tests — expecting clean pass with fix..."
-          ./build/src/test/test_bitcoin --run_test=crypto_tests
+          ./build/bin/test_bitcoin --run_test=crypto_tests
           echo "crypto_tests passed with GCC + ASan + SSE4 path"
