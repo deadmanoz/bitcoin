@@ -1,13 +1,15 @@
 name: "Reproduce: GCC ASan SEGV in sha256_sse4::Transform"
 
 # Demonstrates that GCC + AddressSanitizer causes a SEGV in the SSE4
-# SHA256 implementation. The SSE4 code path is forced by patching out
-# SHA-NI runtime detection, so the bug reproduces regardless of whether
-# the runner CPU has SHA-NI support.
+# SHA256 implementation. Matrix tests across GCC versions and build
+# configurations to map the impact surface.
+#
+# The SSE4 code path is forced by patching out SHA-NI runtime detection,
+# so the bug reproduces regardless of whether the runner CPU has SHA-NI.
 #
 # Expected results:
-#   before-fix (master): SEGV / test failure
-#   after-fix (branch):  clean pass
+#   before-fix (master): SEGV in ASan-enabled configurations
+#   after-fix (branch):  clean pass across all configurations
 
 on:
   workflow_dispatch:
@@ -19,52 +21,59 @@ on:
 
 jobs:
   before-fix:
-    name: "Before fix (master) — expect SEGV"
+    name: "Before fix — GCC ${{ matrix.gcc }}, ${{ matrix.build_type }}, ${{ matrix.sanitizers }}"
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        gcc: ["13", "14"]
+        build_type: ["Debug", "Release"]
+        sanitizers: ["address", "address,undefined"]
     steps:
       - uses: actions/checkout@v4
         with:
           ref: master
 
+      - name: Install GCC ${{ matrix.gcc }} and build dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq \
+            gcc-${{ matrix.gcc }} g++-${{ matrix.gcc }} \
+            cmake ninja-build pkg-config \
+            libevent-dev libboost-dev
+
       - name: Environment info
         run: |
           echo "=== Compiler ==="
-          gcc --version | head -1
-          echo ""
+          gcc-${{ matrix.gcc }} --version | head -1
+          echo "=== Build config ==="
+          echo "Build type: ${{ matrix.build_type }}"
+          echo "Sanitizers: ${{ matrix.sanitizers }}"
           echo "=== CPU ==="
           lscpu | grep -iE 'model name|Thread|Core|Socket'
-          echo ""
           echo "=== SHA-NI support ==="
           if grep -q sha_ni /proc/cpuinfo; then
             echo "SHA-NI: PRESENT (will be patched out to force SSE4 path)"
           else
             echo "SHA-NI: ABSENT (SSE4 path used naturally)"
           fi
-          echo ""
           echo "=== SSE4 support ==="
           grep -oE 'sse4_[12]' /proc/cpuinfo | sort -u || echo "No SSE4"
 
-      - name: Install build dependencies
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq \
-            build-essential cmake ninja-build pkg-config \
-            libevent-dev libboost-dev
-
       - name: Force SSE4 path (disable SHA-NI runtime detection)
         run: |
-          echo "Patching sha256.cpp to skip SHA-NI, forcing SSE4 code path..."
           sed -i 's/have_x86_shani = (ebx >> 29) & 1;/have_x86_shani = false; \/\/ PATCHED: force SSE4/' \
             src/crypto/sha256.cpp
           grep -n "PATCHED" src/crypto/sha256.cpp
 
-      - name: Build with GCC + ASan
+      - name: Build
         run: |
           cmake -B build -G Ninja \
-            -DCMAKE_C_COMPILER=gcc \
-            -DCMAKE_CXX_COMPILER=g++ \
-            -DSANITIZERS=address \
+            -DCMAKE_C_COMPILER=gcc-${{ matrix.gcc }} \
+            -DCMAKE_CXX_COMPILER=g++-${{ matrix.gcc }} \
+            -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} \
+            -DSANITIZERS=${{ matrix.sanitizers }} \
             -DBUILD_BENCH=OFF \
             -DBUILD_GUI=OFF \
             -DENABLE_WALLET=OFF \
@@ -74,40 +83,54 @@ jobs:
             -DENABLE_IPC=OFF
           cmake --build build --target test_bitcoin -j$(nproc)
 
-      - name: Run crypto tests (expect SEGV)
-        id: test_before
+      - name: Run crypto tests
+        id: test
         continue-on-error: true
         run: |
-          echo "Running crypto_tests — expecting AddressSanitizer SEGV..."
+          echo "Running crypto_tests..."
           ./build/bin/test_bitcoin --run_test=crypto_tests 2>&1
-          echo "exit_code=$?" >> "$GITHUB_OUTPUT"
 
-      - name: Verify failure
+      - name: Result
         run: |
-          if [ "${{ steps.test_before.outcome }}" = "failure" ]; then
-            echo "EXPECTED: crypto_tests failed (GCC ASan SEGV in sha256_sse4::Transform)"
+          echo "=== GCC ${{ matrix.gcc }} | ${{ matrix.build_type }} | ${{ matrix.sanitizers }} ==="
+          if [ "${{ steps.test.outcome }}" = "failure" ]; then
+            echo "SEGV (crash confirmed)"
           else
-            echo "UNEXPECTED: crypto_tests passed — runner CPU may not exercise the buggy path"
-            echo "This can happen if SSE4 is not available at all (unlikely on x86_64)"
+            echo "PASS (no crash)"
           fi
 
   after-fix:
-    name: "After fix (${{ inputs.fix_branch }}) — expect pass"
+    name: "After fix — GCC ${{ matrix.gcc }}, ${{ matrix.build_type }}, ${{ matrix.sanitizers }}"
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        gcc: ["13", "14"]
+        build_type: ["Debug", "Release"]
+        sanitizers: ["address", "address,undefined"]
     steps:
       - uses: actions/checkout@v4
         with:
           ref: ${{ inputs.fix_branch }}
 
+      - name: Install GCC ${{ matrix.gcc }} and build dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq \
+            gcc-${{ matrix.gcc }} g++-${{ matrix.gcc }} \
+            cmake ninja-build pkg-config \
+            libevent-dev libboost-dev
+
       - name: Environment info
         run: |
           echo "=== Compiler ==="
-          gcc --version | head -1
-          echo ""
+          gcc-${{ matrix.gcc }} --version | head -1
+          echo "=== Build config ==="
+          echo "Build type: ${{ matrix.build_type }}"
+          echo "Sanitizers: ${{ matrix.sanitizers }}"
           echo "=== CPU ==="
           lscpu | grep -iE 'model name|Thread|Core|Socket'
-          echo ""
           echo "=== SHA-NI support ==="
           if grep -q sha_ni /proc/cpuinfo; then
             echo "SHA-NI: PRESENT (will be patched out to force SSE4 path)"
@@ -115,16 +138,8 @@ jobs:
             echo "SHA-NI: ABSENT (SSE4 path used naturally)"
           fi
 
-      - name: Install build dependencies
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq \
-            build-essential cmake ninja-build pkg-config \
-            libevent-dev libboost-dev
-
       - name: Force SSE4 path (disable SHA-NI runtime detection)
         run: |
-          echo "Patching sha256.cpp to skip SHA-NI, forcing SSE4 code path..."
           sed -i 's/have_x86_shani = (ebx >> 29) & 1;/have_x86_shani = false; \/\/ PATCHED: force SSE4/' \
             src/crypto/sha256.cpp
           grep -n "PATCHED" src/crypto/sha256.cpp
@@ -134,12 +149,13 @@ jobs:
           echo "=== Guard in sha256_sse4.cpp ==="
           head -35 src/crypto/sha256_sse4.cpp | tail -25
 
-      - name: Build with GCC + ASan
+      - name: Build
         run: |
           cmake -B build -G Ninja \
-            -DCMAKE_C_COMPILER=gcc \
-            -DCMAKE_CXX_COMPILER=g++ \
-            -DSANITIZERS=address \
+            -DCMAKE_C_COMPILER=gcc-${{ matrix.gcc }} \
+            -DCMAKE_CXX_COMPILER=g++-${{ matrix.gcc }} \
+            -DCMAKE_BUILD_TYPE=${{ matrix.build_type }} \
+            -DSANITIZERS=${{ matrix.sanitizers }} \
             -DBUILD_BENCH=OFF \
             -DBUILD_GUI=OFF \
             -DENABLE_WALLET=OFF \
@@ -149,8 +165,9 @@ jobs:
             -DENABLE_IPC=OFF
           cmake --build build --target test_bitcoin -j$(nproc)
 
-      - name: Run crypto tests (should pass)
+      - name: Run crypto tests (should all pass)
         run: |
-          echo "Running crypto_tests — expecting clean pass with fix..."
+          echo "Running crypto_tests..."
           ./build/bin/test_bitcoin --run_test=crypto_tests
-          echo "crypto_tests passed with GCC + ASan + SSE4 path"
+          echo "=== GCC ${{ matrix.gcc }} | ${{ matrix.build_type }} | ${{ matrix.sanitizers }} ==="
+          echo "PASS (fix confirmed)"
